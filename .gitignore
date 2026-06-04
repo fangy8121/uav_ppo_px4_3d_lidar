@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+logs/
+models/
+outputs/
+
+# Accidental colcon build from repository root.
+build/
+install/
+log/
+
+# ROS 2 build artifacts.
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Local dependency checkouts. Users should fetch this themselves.
+ros2_ws/src/px4_msgs/
+
+# Local backup files.
+*.bak
+
+# Local agent instructions.
+AGENTS.md
