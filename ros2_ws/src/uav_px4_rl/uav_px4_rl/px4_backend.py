@@ -16,7 +16,7 @@ class Px4RosBackend:
     Gazebo 必须正在运行提供的world文件
     PX4 SITL 必须已生成一架 x500 无人机
     Micro XRCE-DDS Agent 必须已连接，
-    且 ros_gz_bridge 必须已导出该世界的 set_pose 和控制服务。
+    且 Gazebo bridge 必须已导出该世界的 set_pose 和控制服务。
     """
 
     def __init__(
@@ -96,37 +96,43 @@ class Px4RosBackend:
             rclpy.init()  # 初始化ROS2
 
         self.node = Node("px4_gazebo_wire_backend")
-        qos = QoSProfile( #只保留最新一条消息；允许丢包；不关心旧消息。
+        px4_qos = QoSProfile( #只保留最新一条消息；允许丢包；不关心旧消息。
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
             history=HistoryPolicy.KEEP_LAST,
             depth=1, 
         )
         self.offboard_publisher = self.node.create_publisher( # 使用Offboard控制模式
-            OffboardControlMode, "/fmu/in/offboard_control_mode", qos
+            OffboardControlMode, "/fmu/in/offboard_control_mode", px4_qos
         )
         self.setpoint_publisher = self.node.create_publisher(
-            TrajectorySetpoint, "/fmu/in/trajectory_setpoint", qos
+            TrajectorySetpoint, "/fmu/in/trajectory_setpoint", px4_qos
         )
         self.command_publisher = self.node.create_publisher(
-            VehicleCommand, "/fmu/in/vehicle_command", qos
+            VehicleCommand, "/fmu/in/vehicle_command", px4_qos
         )
         self.node.create_subscription( #订阅无人机位置速度
-            VehicleOdometry, "/fmu/out/vehicle_odometry", self._on_odometry, qos
+            VehicleOdometry, "/fmu/out/vehicle_odometry", self._on_odometry, px4_qos
         )
         self.node.create_subscription( #订阅无人机飞行状态
-            VehicleStatus, "/fmu/out/vehicle_status_v1", self._on_status, qos
+            VehicleStatus, "/fmu/out/vehicle_status_v1", self._on_status, px4_qos
         )
         self.node.create_subscription( #兼容不带消息版本后缀的PX4话题
-            VehicleStatus, "/fmu/out/vehicle_status", self._on_status, qos
+            VehicleStatus, "/fmu/out/vehicle_status", self._on_status, px4_qos
         )
         if lidar_topic is not None:
             if PointCloud2 is None or point_cloud2 is None:
                 raise RuntimeError(
                     "lidar_topic requires sensor_msgs and sensor_msgs_py in the ROS 2 environment."
                 )
+            lidar_qos = QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=1,
+            )
             self.node.create_subscription(
-                PointCloud2, lidar_topic, self._on_lidar, qos
+                PointCloud2, lidar_topic, self._on_lidar, lidar_qos
             )
         self.set_pose_client = self.node.create_client( #直接设置无人机位置
             SetEntityPose, f"/world/{world_name}/set_pose"
@@ -140,7 +146,11 @@ class Px4RosBackend:
         self.executor.add_node(self.node)
         self.thread = Thread(target=self.executor.spin, daemon=True)
         self.thread.start()
-        self._wait_for_stack()
+        try:
+            self._wait_for_stack()
+        except Exception:
+            self.close()
+            raise
 
     def prepare_episode(self, scenario):
         """Move to a random start safely, then put the episode wire in place."""

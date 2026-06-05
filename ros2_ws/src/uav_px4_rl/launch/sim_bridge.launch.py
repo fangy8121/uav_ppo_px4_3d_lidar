@@ -13,6 +13,8 @@ def generate_launch_description():
     package_share = Path(get_package_share_directory("uav_px4_rl"))
     world = str(package_share / "worlds" / "wire_training_world.sdf")
     gui = LaunchConfiguration("gui")
+    bridge_lidar = LaunchConfiguration("bridge_lidar")
+    lidar_topic = LaunchConfiguration("lidar_topic")
 
     gui_sim = ExecuteProcess(
         cmd=["gz", "sim", "-r", world],
@@ -31,6 +33,14 @@ def generate_launch_description():
         arguments=["--world", "wire_training_world", "--timeout-ms", "1000"],
         output="screen",
     )
+    lidar_bridge = Node(
+        package="uav_px4_rl",
+        executable="gz_pointcloud_bridge",
+        name="x500_3d_lidar_bridge",
+        arguments=["--gz-topic", "/x500/lidar/points", "--ros-topic", lidar_topic],
+        output="screen",
+        condition=IfCondition(bridge_lidar),
+    )
 
     return LaunchDescription(
         [
@@ -41,14 +51,19 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "lidar_topic",
-                default_value="",
+                default_value="/x500/lidar/points",
                 description=(
-                    "Reserved ROS 2 PointCloud2 topic for a real 3D LiDAR bridge. "
-                    "Leave empty until the x500 model has a LiDAR plugin and bridge."
+                    "ROS 2 PointCloud2 topic used by the x500_3d_lidar Gazebo bridge."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "bridge_lidar",
+                default_value="true",
+                description="Bridge the x500_3d_lidar Gazebo point cloud to ROS 2.",
             ),
             gui_sim,
             headless_sim,
             bridge,
+            lidar_bridge,
         ]
     )

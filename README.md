@@ -7,7 +7,7 @@
 ```text
 PPO -> Gymnasium Px4GazeboWireEnv
     -> 3D LiDAR perception features observation
-    -> ROS 2 Offboard -> PX4 SITL -> Gazebo x500 + 多电线场景
+    -> ROS 2 Offboard -> PX4 SITL -> Gazebo x500_3d_lidar + 多电线场景
     -> PX4 里程计反馈 + 仿真真值 reward/collision/info
 ```
 
@@ -57,6 +57,7 @@ uav_ppo_px4_3d_lidar/
     USAGE_GUIDE_UBUNTU22.md
   ros2_ws/src/uav_px4_rl/
     launch/sim_bridge.launch.py
+    models/x500_3d_lidar/model.sdf
     worlds/wire_training_world.sdf
     uav_px4_rl/
       backend.py
@@ -81,7 +82,8 @@ uav_ppo_px4_3d_lidar/
 | `env.py` | 22 维 observation，LiDAR 特征获取，真值 reward/info |
 | `rewards.py` | 多线安全距离惩罚、高度/走廊/边界约束 |
 | `backend.py` | 无 ROS/PX4 的诊断后端 |
-| `px4_backend.py` | PX4 Offboard 后端，多电线模型摆放，预留 PointCloud2 接口 |
+| `px4_backend.py` | PX4 Offboard 后端，多电线模型摆放，PointCloud2 订阅接口 |
+| `gz_pointcloud_bridge.py` | Gazebo `PointCloudPacked` 到 ROS 2 `PointCloud2` 的点云 bridge |
 | `wire_training_world.sdf` | 默认包含 `wire_obstacle`、`wire_obstacle_1`、`wire_obstacle_2` 三个可移动电线模型 |
 
 ## 安装与构建
@@ -96,6 +98,30 @@ Gazebo Harmonic
 Micro XRCE-DDS Agent v2.x
 Python 3.10
 ```
+
+安装或检查 Micro XRCE-DDS Agent：
+
+```bash
+command -v MicroXRCEAgent
+```
+
+如果没有输出，安装 v2.x：
+
+```bash
+sudo apt install cmake g++ git
+cd ~
+git clone https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
+cd Micro-XRCE-DDS-Agent
+git checkout v2.4.3
+mkdir -p build
+cd build
+cmake ..
+make -j$(nproc)
+sudo make install
+sudo ldconfig /usr/local/lib
+```
+
+Micro XRCE-DDS Agent 是 PX4 SITL 与 ROS 2 的通信代理。没有它，ROS 2 后端收不到 `/fmu/out/*` 里程计，也无法把 `/fmu/in/*` Offboard 指令送进 PX4。正式启动时由 `tools/start_stack.sh` 自动运行，不需要手动常驻启动。
 
 准备 `px4_msgs`：
 
@@ -117,11 +143,97 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 在线训练
+## 首次启动与冒烟验证
 
-启动 PX4/Gazebo 栈后运行：
+本仓库默认模型就是带 3D LiDAR 的 `x500_3d_lidar`。首次启动建议打开 GUI，确认 Gazebo 世界、完整无人机模型和后续冒烟测试运动过程：
 
 ```bash
+cd ~/uav_ppo_px4_3d_lidar
+export PX4_AUTOPILOT_DIR=~/PX4-Autopilot
+GUI=true bash tools/start_stack.sh
+```
+
+启动脚本默认会设置 `PX4_SIM_MODEL=gz_x500_3d_lidar` 并开启点云 bridge。日常训练时关闭 GUI：
+
+```bash
+GUI=false bash tools/start_stack.sh
+```
+
+默认 ROS 2 点云 topic：
+
+```text
+/x500/lidar/points
+```
+
+训练前在另一个终端完成验收：
+
+```bash
+cd ~/uav_ppo_px4_3d_lidar
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+ros2 topic echo /fmu/out/vehicle_odometry --once
+ros2 topic echo /x500/lidar/points --once
+ros2 run uav_px4_rl lidar_smoke_test
+ros2 run uav_px4_rl offboard_smoke_test
+```
+
+`lidar_smoke_test` 会通过 `Px4RosBackend(lidar_topic="/x500/lidar/points")` 接收真实 `PointCloud2`，转换为 numpy 点云，并用 `LiDARFeatureExtractor` 压缩成 13 维特征。该测试验证点云链路和特征提取，不做语义分类；需要额外走固定场景准备流程时再运行 `ros2 run uav_px4_rl lidar_smoke_test --prepare-fixed-scene`。
+
+基本 `gz_x500` 只作为排障/兼容覆盖项。可以直接执行下面这一行，它只对这一次启动临时设置环境变量；如果已有仿真栈在运行，先按 `Ctrl-C` 停止：
+
+```bash
+PX4_SIM_MODEL=gz_x500 BRIDGE_LIDAR=false GUI=false bash tools/start_stack.sh
+```
+
+这会启动基本 `x500` 并关闭 LiDAR bridge，因此 `/x500/lidar/points` 不会作为可用训练点云。
+
+## 在线训练
+
+如果首次验证时使用的是 `GUI=true`，训练前先在启动栈的终端按 `Ctrl-C` 停止，再用无 GUI 模式重启，减少负担：
+
+```bash
+cd ~/uav_ppo_px4_3d_lidar
+export PX4_AUTOPILOT_DIR=~/PX4-Autopilot
+GUI=false bash tools/start_stack.sh
+```
+
+如果当前已经是 `GUI=false` 的默认 `gz_x500_3d_lidar` 栈，并且冒烟验证已通过，则不用重启。保持启动栈终端打开，在另一个终端快速确认点云链路：
+
+```bash
+cd ~/uav_ppo_px4_3d_lidar
+mkdir -p logs/ros logs/matplotlib
+export ROS_LOG_DIR=$PWD/logs/ros
+export MPLCONFIGDIR=$PWD/logs/matplotlib
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+ros2 topic echo /fmu/out/vehicle_odometry --once
+ros2 run uav_px4_rl lidar_smoke_test
+```
+
+如果里程计没有输出，先不要训练，回到启动栈终端确认 PX4 已启动完成。第一次进入在线训练时，先跑短训练：
+
+```bash
+source .venv/bin/activate
+python train/train_ppo_px4.py \
+  --scenario fixed \
+  --num-wires 3 \
+  --perception lidar \
+  --timesteps 64 \
+  --n-steps 64 \
+  --batch-size 32 \
+  --model-name ppo_px4_train_smoke
+```
+
+短训练通过后，再启动正式训练：
+
+```bash
+cd ~/uav_ppo_px4_3d_lidar
+mkdir -p logs/ros logs/matplotlib
+export ROS_LOG_DIR=$PWD/logs/ros
+export MPLCONFIGDIR=$PWD/logs/matplotlib
+source /opt/ros/humble/setup.bash
+source ros2_ws/install/setup.bash
+source .venv/bin/activate
 python train/train_ppo_px4.py \
   --scenario random \
   --num-wires 3 \
@@ -135,13 +247,13 @@ python train/train_ppo_px4.py \
 models/ppo_px4_3d_lidar_multiwire.zip
 ```
 
-如果已经 bridge 出真实 3D LiDAR 的 `sensor_msgs/msg/PointCloud2` topic，可传入：
+默认训练入口订阅 `/x500/lidar/points`。如果改接其他真实 3D LiDAR 的 `sensor_msgs/msg/PointCloud2` topic，再覆盖：
 
 ```bash
 python train/train_ppo_px4.py --lidar-topic /your/pointcloud2/topic
 ```
 
-没有真实 LiDAR topic 时，PX4 后端返回 `None`，环境使用空 LiDAR 特征；只有 `KinematicDiagnosticBackend` 本地测试会启用 `SyntheticLidarSimulator` fallback。
+没有真实 LiDAR 样本时，PX4 后端返回 `None`，环境使用空 LiDAR 特征；只有 `KinematicDiagnosticBackend` 本地测试会启用 `SyntheticLidarSimulator` fallback。这个边界由纯 Python 测试覆盖，正式训练前仍应运行 `lidar_smoke_test` 确认真实点云链路可用。
 
 ## 在线评估
 
@@ -171,15 +283,22 @@ CSV 和 summary 记录包括：
 python -m pytest
 ```
 
-测试覆盖固定/随机多电线场景、有限线段距离、多线最近距离与所有距离、LiDAR 特征、synthetic 点云、环境 observation shape，以及诊断后端 reset/step。
+测试覆盖固定/随机多电线场景、有限线段距离、多线最近距离与所有距离、LiDAR 特征、synthetic 点云、正式后端无点云时的空特征路径、环境 observation shape，以及诊断后端 reset/step。
 
-## 真实 3D LiDAR 接入位置
+PX4/Gazebo 集成验收需要在仿真栈运行时执行：
 
-当前真实 LiDAR 接口是 `Px4RosBackend(lidar_topic=...)` 和 `get_lidar_points()/latest_lidar_points`。真正接入 Gazebo 3D LiDAR 还需要：
+```bash
+ros2 run uav_px4_rl lidar_smoke_test
+ros2 run uav_px4_rl offboard_smoke_test
+```
 
-1. 在 Gazebo/PX4 `x500` 模型中挂载 3D LiDAR 传感器插件。
-2. 将 Gazebo 点云 bridge 为 ROS 2 `sensor_msgs/msg/PointCloud2` topic。
-3. 训练或评估时把该 topic 传给 `--lidar-topic`。
-4. 必要时扩展 `sim_bridge.launch.py` 或外部 `ros_gz_bridge` 配置。
+## 可选：更换外部 PointCloud2 Topic
+
+默认 3D LiDAR 启动和检查流程已在前面写完。本节只用于以后换成真实硬件 LiDAR 或其他 Gazebo LiDAR topic。外部 LiDAR 必须发布 ROS 2 `sensor_msgs/msg/PointCloud2`：
+
+```bash
+ros2 run uav_px4_rl lidar_smoke_test --lidar-topic /your/pointcloud2/topic
+python train/train_ppo_px4.py --lidar-topic /your/pointcloud2/topic
+```
 
 不要在代码中写死用户本机 PX4 路径。PX4 路径继续通过环境变量和启动脚本管理。

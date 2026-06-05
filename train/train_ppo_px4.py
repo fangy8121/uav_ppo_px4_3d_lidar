@@ -2,6 +2,15 @@
 
 from pathlib import Path
 import argparse
+import os
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_RUN_LOG_DIR = PROJECT_ROOT / "logs"
+os.environ.setdefault("ROS_LOG_DIR", str(DEFAULT_RUN_LOG_DIR / "ros"))
+os.environ.setdefault("MPLCONFIGDIR", str(DEFAULT_RUN_LOG_DIR / "matplotlib"))
+Path(os.environ["ROS_LOG_DIR"]).mkdir(parents=True, exist_ok=True)
+Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
@@ -11,7 +20,7 @@ from uav_px4_rl.env import Px4GazeboWireEnv
 from uav_px4_rl.px4_backend import Px4RosBackend
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_LIDAR_TOPIC = "/x500/lidar/points"
 
 
 def parse_args():
@@ -26,8 +35,11 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=0)  #
     parser.add_argument("--num-wires", type=int, default=3)
     parser.add_argument("--perception", default="lidar", choices=["lidar", "empty", "none"])
-    parser.add_argument("--lidar-topic", default=None)
+    parser.add_argument("--lidar-topic", default=DEFAULT_LIDAR_TOPIC)
     parser.add_argument("--model-name", default="ppo_px4_3d_lidar_multiwire")
+    parser.add_argument("--setup-timeout", type=float, default=60.0)
+    parser.add_argument("--n-steps", type=int, default=1024)
+    parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument(
         "--realtime",
         action="store_true",
@@ -43,10 +55,21 @@ def main():
     model_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    backend = Px4RosBackend(
-        synchronous=not args.realtime,
-        lidar_topic=args.lidar_topic,
-    ) #创建PX4ROS后端
+    try:
+        backend = Px4RosBackend(
+            synchronous=not args.realtime,
+            lidar_topic=args.lidar_topic,
+            setup_timeout=args.setup_timeout,
+        ) #创建PX4ROS后端
+    except TimeoutError as exc:
+        print(
+            "PX4/Gazebo stack is not ready for training. Start terminal A with "
+            "`GUI=false bash tools/start_stack.sh`, wait for PX4 startup, then "
+            "verify `/fmu/out/vehicle_odometry` and `/x500/lidar/points` before "
+            "running PPO training.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
     env = Px4GazeboWireEnv( #创建PX4GazeboWireEnv环境
         backend=backend,
         scenario_mode=args.scenario, #场景模式
@@ -65,8 +88,8 @@ def main():
         "MlpPolicy", #MLP策略
         env, 
         learning_rate=3e-4, 
-        n_steps=1024, 
-        batch_size=64,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
         gamma=0.99, 
         gae_lambda=0.95, 
         clip_range=0.2, 

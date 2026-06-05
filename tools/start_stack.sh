@@ -9,6 +9,10 @@ PX4_BUILD_DIR="${PX4_AUTOPILOT_DIR}/build/px4_sitl_default"
 PX4_GZ_ENV="${PX4_BUILD_DIR}/rootfs/gz_env.sh"
 PYTHON_BIN="${PYTHON_BIN:-${PROJECT_DIR}/.venv/bin/python}"
 GCS_HEARTBEAT="${GCS_HEARTBEAT:-true}"
+PX4_SIM_MODEL="${PX4_SIM_MODEL:-gz_x500_3d_lidar}"
+MODEL_NAME="${PX4_SIM_MODEL#gz_}"
+PROJECT_GZ_MODELS="${PROJECT_DIR}/ros2_ws/src/uav_px4_rl/models"
+BRIDGE_LIDAR="${BRIDGE_LIDAR:-true}"
 
 source "/opt/ros/${ROS_DISTRO_NAME}/setup.bash"
 source "${PROJECT_DIR}/ros2_ws/install/setup.bash"
@@ -27,8 +31,23 @@ fi
 # these paths so the standalone world can spawn PX4's gz_x500 model.
 source "${PX4_GZ_ENV}"
 
-if [[ ! -f "${PX4_GZ_MODELS}/x500/model.sdf" ]]; then
-  echo "PX4 x500 model not found: ${PX4_GZ_MODELS}/x500/model.sdf" >&2
+PX4_DEFAULT_GZ_MODELS="${PX4_GZ_MODELS}"
+if [[ ! -f "${PX4_DEFAULT_GZ_MODELS}/x500/model.sdf" ]]; then
+  echo "PX4 x500 model not found: ${PX4_DEFAULT_GZ_MODELS}/x500/model.sdf" >&2
+  exit 1
+fi
+
+if [[ -d "${PROJECT_GZ_MODELS}" ]]; then
+  export GZ_SIM_RESOURCE_PATH="${PROJECT_GZ_MODELS}:${PX4_DEFAULT_GZ_MODELS}:${GZ_SIM_RESOURCE_PATH:-}"
+fi
+
+if [[ -f "${PROJECT_GZ_MODELS}/${MODEL_NAME}/model.sdf" ]]; then
+  export PX4_GZ_MODELS="${PROJECT_GZ_MODELS}"
+elif [[ -f "${PX4_DEFAULT_GZ_MODELS}/${MODEL_NAME}/model.sdf" ]]; then
+  export PX4_GZ_MODELS="${PX4_DEFAULT_GZ_MODELS}"
+else
+  echo "PX4 Gazebo model not found for ${PX4_SIM_MODEL}: ${MODEL_NAME}/model.sdf" >&2
+  echo "Checked: ${PROJECT_GZ_MODELS} and ${PX4_DEFAULT_GZ_MODELS}" >&2
   exit 1
 fi
 
@@ -89,18 +108,22 @@ PY
   pids+=("$!")
 fi
 
-ros2 launch uav_px4_rl sim_bridge.launch.py gui:="${GUI}" &
+ros2 launch uav_px4_rl sim_bridge.launch.py gui:="${GUI}" bridge_lidar:="${BRIDGE_LIDAR}" &
 pids+=("$!")
 sleep 4
 
 cd "${PX4_AUTOPILOT_DIR}"
 PX4_GZ_STANDALONE=1 \
 PX4_SYS_AUTOSTART=4001 \
-PX4_SIM_MODEL=gz_x500 \
+PX4_SIM_MODEL="${PX4_SIM_MODEL}" \
 PX4_GZ_MODEL_POSE="0,0,0,0,0,0" \
 "${PX4_BUILD_DIR}/bin/px4" &
 pids+=("$!")
 
 echo "PX4/Gazebo/ROS 2 stack running. Leave this terminal open."
 echo "Gazebo partition: ${GZ_PARTITION}"
+echo "PX4 simulation model: ${PX4_SIM_MODEL}"
+if [[ "${BRIDGE_LIDAR}" == "true" ]]; then
+  echo "LiDAR PointCloud2 topic: /x500/lidar/points"
+fi
 wait

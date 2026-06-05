@@ -12,6 +12,7 @@ from uav_px4_rl.px4_backend import Px4RosBackend
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_LIDAR_TOPIC = "/x500/lidar/points"
 CSV_FIELDS = [
     "episode",
     "step",
@@ -60,7 +61,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--num-wires", type=int, default=3)
     parser.add_argument("--perception", default="lidar", choices=["lidar", "empty", "none"])
-    parser.add_argument("--lidar-topic", default=None)
+    parser.add_argument("--lidar-topic", default=DEFAULT_LIDAR_TOPIC)
     parser.add_argument(
         "--sync",
         action="store_true",

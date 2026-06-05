@@ -1,6 +1,7 @@
 import numpy as np
 
 from uav_px4_rl.backend import KinematicDiagnosticBackend
+from uav_px4_rl.backend import VehicleState
 from uav_px4_rl.env import Px4GazeboWireEnv
 from uav_px4_rl.frames import enu_to_ned, ned_to_enu
 from uav_px4_rl.geometry import (
@@ -10,6 +11,44 @@ from uav_px4_rl.geometry import (
 )
 from uav_px4_rl.perception import LiDARFeatureExtractor, SyntheticLidarSimulator
 from uav_px4_rl.scenario import ScenarioSampler, WireSegment
+
+
+class NoLidarBackend:
+    def __init__(self):
+        self.state = VehicleState(
+            np.zeros(3, dtype=np.float32),
+            np.zeros(3, dtype=np.float32),
+            timestamp_us=0,
+            armed=True,
+            offboard=True,
+        )
+
+    def prepare_episode(self, scenario):
+        self.state = VehicleState(
+            scenario.start.copy(),
+            np.zeros(3, dtype=np.float32),
+            timestamp_us=0,
+            armed=True,
+            offboard=True,
+        )
+        return self.state
+
+    def advance_velocity(self, velocity_enu, duration_seconds):
+        velocity = np.asarray(velocity_enu, dtype=np.float32)
+        self.state = VehicleState(
+            self.state.position + velocity * float(duration_seconds),
+            velocity,
+            timestamp_us=self.state.timestamp_us + int(float(duration_seconds) * 1_000_000),
+            armed=True,
+            offboard=True,
+        )
+        return self.state
+
+    def get_lidar_points(self):
+        return None
+
+    def close(self):
+        pass
 
 
 def test_coordinate_conversions_round_trip():
@@ -131,4 +170,20 @@ def test_environment_accepts_backend_states_without_px4_runtime():
     assert not truncated
     _, _, _, truncated, _ = env.step(np.zeros(3, dtype=np.float32))
     assert truncated
+    env.close()
+
+
+def test_environment_uses_empty_lidar_features_when_px4_backend_has_no_points():
+    env = Px4GazeboWireEnv(
+        backend=NoLidarBackend(),
+        scenario_mode="fixed",
+        max_steps=1,
+        num_wires=3,
+    )
+    obs, info = env.reset(seed=5)
+    lidar_features = info["lidar_features"]
+
+    assert obs.shape == (22,)
+    np.testing.assert_allclose(lidar_features, env.lidar_extractor.empty_features())
+    assert info["lidar_confidence"] == 0.0
     env.close()

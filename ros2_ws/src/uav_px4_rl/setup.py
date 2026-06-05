@@ -12,6 +12,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+        ("share/" + package_name + "/models/x500_3d_lidar", glob("models/x500_3d_lidar/*")),
         ("share/" + package_name + "/worlds", glob("worlds/*.sdf")),
     ],
     install_requires=["setuptools", "numpy", "gymnasium"],
@@ -24,7 +25,9 @@ setup(
     entry_points={
         "console_scripts": [
             "offboard_smoke_test = uav_px4_rl.offboard_smoke_test:main",
+            "lidar_smoke_test = uav_px4_rl.lidar_smoke_test:main",
             "gz_harmonic_bridge = uav_px4_rl.gz_harmonic_bridge:main",
+            "gz_pointcloud_bridge = uav_px4_rl.gz_pointcloud_bridge:main",
         ],
     },
 )

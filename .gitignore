@@ -6,6 +6,9 @@ __pycache__/
 logs/
 models/
 outputs/
+!ros2_ws/src/uav_px4_rl/models/
+!ros2_ws/src/uav_px4_rl/models/x500_3d_lidar/
+!ros2_ws/src/uav_px4_rl/models/x500_3d_lidar/**
 
 # Accidental colcon build from repository root.
 build/

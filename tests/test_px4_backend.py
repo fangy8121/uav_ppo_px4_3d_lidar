@@ -1,3 +1,4 @@
+from threading import Lock
 from types import SimpleNamespace
 
 import numpy as np
@@ -75,6 +76,14 @@ def test_gazebo_service_retries_rejected_response():
     assert response.success
     assert len(client.requests) == 2
     assert len(logger.warnings) == 1
+
+
+def test_latest_lidar_points_returns_none_before_first_sample():
+    backend = object.__new__(Px4RosBackend)
+    backend._lock = Lock()
+    backend._latest_lidar_points = None
+
+    assert backend.latest_lidar_points is None
 
 
 def test_gazebo_service_raises_after_retry_limit():
