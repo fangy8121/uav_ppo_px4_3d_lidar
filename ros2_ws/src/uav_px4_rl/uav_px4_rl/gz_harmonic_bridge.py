@@ -3,6 +3,7 @@
 import argparse
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 from ros_gz_interfaces.msg import Entity
@@ -72,6 +73,13 @@ class GzHarmonicBridge(Node):
             Boolean,
             self.timeout_ms,
         )
+        if not ok:
+            self.get_logger().warning(
+                f"Gazebo transport timed out while setting pose after "
+                f"{self.timeout_ms} ms."
+            )
+        elif not gz_response.data:
+            self.get_logger().warning("Gazebo rejected set_pose request.")
         response.success = bool(ok and gz_response.data)
         return response
 
@@ -100,6 +108,13 @@ class GzHarmonicBridge(Node):
             Boolean,
             self.timeout_ms,
         )
+        if not ok:
+            self.get_logger().warning(
+                f"Gazebo transport timed out while controlling the world after "
+                f"{self.timeout_ms} ms."
+            )
+        elif not gz_response.data:
+            self.get_logger().warning("Gazebo rejected world control request.")
         response.success = bool(ok and gz_response.data)
         return response
 
@@ -107,7 +122,7 @@ class GzHarmonicBridge(Node):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--world", default="wire_training_world")
-    parser.add_argument("--timeout-ms", type=int, default=1000)
+    parser.add_argument("--timeout-ms", type=int, default=5000)
     args, _ = parser.parse_known_args()
     return args
 
@@ -118,9 +133,12 @@ def main():
     node = GzHarmonicBridge(args.world, args.timeout_ms)
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

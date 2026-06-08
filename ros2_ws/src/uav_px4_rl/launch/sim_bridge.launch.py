@@ -15,6 +15,7 @@ def generate_launch_description():
     gui = LaunchConfiguration("gui")
     bridge_lidar = LaunchConfiguration("bridge_lidar")
     lidar_topic = LaunchConfiguration("lidar_topic")
+    gz_service_timeout_ms = LaunchConfiguration("gz_service_timeout_ms")
 
     gui_sim = ExecuteProcess(
         cmd=["gz", "sim", "-r", world],
@@ -30,7 +31,12 @@ def generate_launch_description():
         package="uav_px4_rl",
         executable="gz_harmonic_bridge",
         name="wire_world_bridge",
-        arguments=["--world", "wire_training_world", "--timeout-ms", "1000"],
+        arguments=[
+            "--world",
+            "wire_training_world",
+            "--timeout-ms",
+            gz_service_timeout_ms,
+        ],
         output="screen",
     )
     lidar_bridge = Node(
@@ -60,6 +66,11 @@ def generate_launch_description():
                 "bridge_lidar",
                 default_value="true",
                 description="Bridge the x500_3d_lidar Gazebo point cloud to ROS 2.",
+            ),
+            DeclareLaunchArgument(
+                "gz_service_timeout_ms",
+                default_value="5000",
+                description="Gazebo transport service timeout used by the ROS bridge.",
             ),
             gui_sim,
             headless_sim,

@@ -210,21 +210,7 @@ ros2 topic echo /fmu/out/vehicle_odometry --once
 ros2 run uav_px4_rl lidar_smoke_test
 ```
 
-如果里程计没有输出，先不要训练，回到启动栈终端确认 PX4 已启动完成。第一次进入在线训练时，先跑短训练：
-
-```bash
-source .venv/bin/activate
-python train/train_ppo_px4.py \
-  --scenario fixed \
-  --num-wires 3 \
-  --perception lidar \
-  --timesteps 64 \
-  --n-steps 64 \
-  --batch-size 32 \
-  --model-name ppo_px4_train_smoke
-```
-
-短训练通过后，再启动正式训练：
+如果里程计没有输出，先不要训练，回到启动栈终端确认 PX4 已启动完成。确认链路正常后直接启动正式训练：
 
 ```bash
 cd ~/uav_ppo_px4_3d_lidar
@@ -238,8 +224,10 @@ python train/train_ppo_px4.py \
   --scenario random \
   --num-wires 3 \
   --perception lidar \
-  --timesteps 300000
+  --timesteps 100000
 ```
+
+正式训练默认使用实时闭环，避免 PX4 lockstep 下频繁暂停/步进 Gazebo 导致服务阻塞。`--synchronous` 仅用于短时同步链路诊断。
 
 默认模型名：
 

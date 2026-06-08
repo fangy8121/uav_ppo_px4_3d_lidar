@@ -274,31 +274,7 @@ ros2 run uav_px4_rl lidar_smoke_test
 ros2 run uav_px4_rl offboard_smoke_test
 ```
 
-### 10.4 终端 B：先跑一次短训练
-
-第一次进入在线训练时，先跑短训练，确认 PPO 能 reset、step、写日志和保存模型。这里显式调小 `--n-steps` 和 `--batch-size`，否则 SB3 PPO 会按默认 rollout 长度收集至少 1024 步，不适合排障。
-
-```bash
-cd ~/uav_ppo_px4_3d_lidar
-mkdir -p logs/ros logs/matplotlib
-export ROS_LOG_DIR=$PWD/logs/ros
-export MPLCONFIGDIR=$PWD/logs/matplotlib
-source /opt/ros/humble/setup.bash
-source ros2_ws/install/setup.bash
-source .venv/bin/activate
-python train/train_ppo_px4.py \
-  --scenario fixed \
-  --num-wires 3 \
-  --perception lidar \
-  --timesteps 64 \
-  --n-steps 64 \
-  --batch-size 32 \
-  --model-name ppo_px4_train_smoke
-```
-
-短训练通过后，再进入正式随机多线训练。
-
-### 10.5 终端 B：启动正式 PPO 训练
+### 10.4 终端 B：启动正式 PPO 训练
 
 确认终端 A 的无 GUI 栈仍在运行后，继续在终端 B 启动正式训练：
 
@@ -314,8 +290,10 @@ python train/train_ppo_px4.py \
   --scenario random \
   --num-wires 3 \
   --perception lidar \
-  --timesteps 300000
+  --timesteps 100000
 ```
+
+正式训练默认使用实时闭环。不要为正式训练添加 `--synchronous`；该选项会在每个动作后暂停并步进 Gazebo，仅用于短时同步链路诊断，在 PX4 lockstep 和 3D LiDAR 同时运行时可能发生 Gazebo control 服务阻塞。
 
 训练入口默认订阅：
 
@@ -323,7 +301,7 @@ python train/train_ppo_px4.py \
 /x500/lidar/points
 ```
 
-### 10.6 常用训练参数
+### 10.5 常用训练参数
 
 ```bash
 # 固定多电线场景，仅用于链路排障
@@ -334,19 +312,36 @@ python train/train_ppo_px4.py --model-name ppo_px4_3d_lidar_multiwire_seed7 --se
 
 # 接入其他真实 PointCloud2 topic
 python train/train_ppo_px4.py --lidar-topic /your/pointcloud2/topic
+
+# 仅诊断 Gazebo 暂停/步进链路，不用于正式训练
+python train/train_ppo_px4.py --synchronous --scenario fixed --timesteps 64 --n-steps 64
 ```
 
 `--perception lidar` 是本项目默认训练路径。`--perception empty` 或 `none` 只用于诊断，不用于正式 3D LiDAR 训练。
 
-### 10.7 训练输出
+### 10.6 训练输出
 
 默认模型输出：
 
 ```text
 models/ppo_px4_3d_lidar_multiwire.zip
 models/checkpoints/
-logs/monitor.csv
+logs/ppo_px4_3d_lidar_multiwire_monitor.csv
 logs/tensorboard/
+```
+
+训练默认每 `2000` 步保存一次检查点。如果训练中断，入口还会保存：
+
+```text
+models/ppo_px4_3d_lidar_multiwire_interrupted.zip
+```
+
+从检查点继续训练时，`--timesteps` 表示本次额外训练的步数：
+
+```bash
+python train/train_ppo_px4.py \
+  --resume-model models/checkpoints/ppo_px4_3d_lidar_multiwire_2000_steps.zip \
+  --timesteps 98000
 ```
 
 训练过程中不要关闭终端 A。训练结束或需要切换 GUI/模型时，先停止训练进程，再到终端 A 按 `Ctrl-C` 关闭仿真栈。

@@ -22,11 +22,11 @@ class Px4RosBackend:
     def __init__(
         self,
         world_name="wire_training_world",
-        synchronous=True,
+        synchronous=False,
         physics_step_size=0.004,
         heartbeat_hz=20.0,
         setup_timeout=35.0,
-        service_timeout=2.0,
+        service_timeout=7.0,
         service_retries=12,
         service_retry_delay=0.1,
         reset_safe_altitude=1.2,

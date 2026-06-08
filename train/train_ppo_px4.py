@@ -25,7 +25,7 @@ DEFAULT_LIDAR_TOPIC = "/x500/lidar/points"
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timesteps", type=int, default=300_000)
+    parser.add_argument("--timesteps", type=int, default=100_000)
     parser.add_argument(
         "--scenario",
         choices=["fixed", "random"],
@@ -40,11 +40,26 @@ def parse_args():
     parser.add_argument("--setup-timeout", type=float, default=60.0)
     parser.add_argument("--n-steps", type=int, default=1024)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--checkpoint-freq", type=int, default=2_000)
     parser.add_argument(
+        "--resume-model",
+        type=Path,
+        help="Continue training from an existing PPO .zip model.",
+    )
+    simulation_mode = parser.add_mutually_exclusive_group()
+    simulation_mode.add_argument(
         "--realtime",
+        dest="synchronous",
+        action="store_false",
+        help="Run the PX4/Gazebo loop in real time (default).",
+    )
+    simulation_mode.add_argument(
+        "--synchronous",
+        dest="synchronous",
         action="store_true",
-        help="Do not pause/step Gazebo; useful for debugging, not recommended for training.",
-    ) #切换到实时模式，不推荐用于训练。
+        help="Pause/step Gazebo for lockstep diagnostics; not recommended for long training.",
+    )
+    parser.set_defaults(synchronous=False)
     return parser.parse_args() #返回解析后的命令行参数
 
 
@@ -57,7 +72,7 @@ def main():
 
     try:
         backend = Px4RosBackend(
-            synchronous=not args.realtime,
+            synchronous=args.synchronous,
             lidar_topic=args.lidar_topic,
             setup_timeout=args.setup_timeout,
         ) #创建PX4ROS后端
@@ -77,31 +92,55 @@ def main():
         num_wires=args.num_wires,
         perception_mode=args.perception,
     )
-    env = Monitor(env, filename=str(log_dir / "monitor.csv"))
+    env = Monitor(env, filename=str(log_dir / f"{args.model_name}_monitor.csv"))
 
-    checkpoint = CheckpointCallback( #创建检查点回调
-        save_freq=10_000, #保存频率
-        save_path=str(model_dir / "checkpoints"), #保存路径
-        name_prefix=args.model_name, #模型名称
-    )
-    model = PPO(
-        "MlpPolicy", #MLP策略
-        env, 
-        learning_rate=3e-4, 
-        n_steps=args.n_steps,
-        batch_size=args.batch_size,
-        gamma=0.99, 
-        gae_lambda=0.95, 
-        clip_range=0.2, 
-        verbose=1, #详细程度
-        seed=args.seed, #随机种子
-        tensorboard_log=str(log_dir / "tensorboard"), #TensorBoard日志路径
-    ) 
-    try: #尝试训练模型
-        model.learn(total_timesteps=args.timesteps, callback=checkpoint, progress_bar=True)
+    model = None
+    try:
+        checkpoint = CheckpointCallback( #创建检查点回调
+            save_freq=args.checkpoint_freq, #保存频率
+            save_path=str(model_dir / "checkpoints"), #保存路径
+            name_prefix=args.model_name, #模型名称
+        )
+        if args.resume_model is not None:
+            model = PPO.load(
+                str(args.resume_model),
+                env=env,
+                tensorboard_log=str(log_dir / "tensorboard"),
+            )
+            print(f"Continuing PPO training from {args.resume_model}.")
+        else:
+            model = PPO(
+                "MlpPolicy", #MLP策略
+                env,
+                learning_rate=3e-4,
+                n_steps=args.n_steps,
+                batch_size=args.batch_size,
+                gamma=0.99,
+                gae_lambda=0.95,
+                clip_range=0.2,
+                verbose=1, #详细程度
+                seed=args.seed, #随机种子
+                tensorboard_log=str(log_dir / "tensorboard"), #TensorBoard日志路径
+            )
+        model.learn(
+            total_timesteps=args.timesteps,
+            callback=checkpoint,
+            progress_bar=True,
+            reset_num_timesteps=args.resume_model is None,
+        )
         output_path = model_dir / args.model_name #模型保存路径
         model.save(str(output_path)) #保存模型
         print(f"Online PX4/Gazebo PPO model saved to {output_path}.zip") #打印模型保存路径
+    except (Exception, KeyboardInterrupt):
+        if model is not None:
+            interrupted_path = model_dir / f"{args.model_name}_interrupted"
+            model.save(str(interrupted_path))
+            print(
+                f"Training stopped before completion; latest model saved to "
+                f"{interrupted_path}.zip",
+                file=sys.stderr,
+            )
+        raise
     finally: #最终关闭环境
         env.close() #关闭环境
 
